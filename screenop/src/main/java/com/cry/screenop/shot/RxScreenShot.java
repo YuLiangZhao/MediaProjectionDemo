@@ -1,4 +1,4 @@
-package com.cry.screenop;
+package com.cry.screenop.shot;
 
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
