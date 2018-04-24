@@ -1,18 +1,15 @@
-package com.cry.screenop.shot;
+package com.cry.screenop;
 
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.support.v4.app.FragmentActivity;
 
 import com.cry.acresult.ActivityResultRequest;
-import com.cry.acresult.ResultEvent;
 
 import io.reactivex.Observable;
-import io.reactivex.functions.Function;
 
 
 /**

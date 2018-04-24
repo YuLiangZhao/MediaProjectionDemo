@@ -12,6 +12,7 @@ import android.support.v4.app.FragmentActivity;
 import android.util.Log;
 import android.view.Surface;
 
+import com.cry.screenop.MediaProjectionHelper;
 import com.cry.screenop.SurfaceFactory;
 
 import java.nio.ByteBuffer;
@@ -26,17 +27,15 @@ import io.reactivex.schedulers.Schedulers;
  * Created by a2957 on 4/21/2018.
  */
 public class RxScreenShot {
-    private String TAG = "RxScreenShot";
-
-    private Handler mCallBackHandler = new CallBackHandler();
-    private MediaCallBack mMediaCallBack = new MediaCallBack();
-    private MediaProjection mediaProjection;
-    SurfaceFactory mSurfaceFactory;
-    ImageReader mImageReader;
-
     public int width = 480;
     public int height = 720;
     public int dpi = 1;
+    SurfaceFactory mSurfaceFactory;
+    ImageReader mImageReader;
+    private String TAG = "RxScreenShot";
+    private Handler mCallBackHandler = new CallBackHandler();
+    private MediaCallBack mMediaCallBack = new MediaCallBack();
+    private MediaProjection mediaProjection;
 
     private RxScreenShot(MediaProjection mediaProjection) {
         this.mediaProjection =
@@ -45,6 +44,15 @@ public class RxScreenShot {
 
     public static RxScreenShot of(MediaProjection mediaProjection) {
         return new RxScreenShot(mediaProjection);
+    }
+
+    public static Observable<Object> shoot(FragmentActivity activity) {
+        return MediaProjectionHelper
+                .requestCapture(activity)
+                .map(mediaProjection -> RxScreenShot.of(mediaProjection).createImageReader())
+                .flatMap(RxScreenShot::startCapture)
+                .subscribeOn(AndroidSchedulers.mainThread())
+                .observeOn(AndroidSchedulers.mainThread());
     }
 
     public RxScreenShot createImageReader() {
@@ -142,13 +150,11 @@ public class RxScreenShot {
                 });
     }
 
-    public static Observable<Object> shoot(FragmentActivity activity) {
-        return MediaProjectionHelper
-                .requestCapture(activity)
-                .map(mediaProjection -> RxScreenShot.of(mediaProjection).createImageReader())
-                .flatMap(RxScreenShot::startCapture)
-                .subscribeOn(AndroidSchedulers.mainThread())
-                .observeOn(AndroidSchedulers.mainThread());
+    static class CallBackHandler extends Handler {
+        @Override
+        public void handleMessage(Message msg) {
+            super.handleMessage(msg);
+        }
     }
 
     class MediaCallBack extends MediaProjection.Callback {
@@ -156,13 +162,6 @@ public class RxScreenShot {
         public void onStop() {
             super.onStop();
             //这里还需要进行处理
-        }
-    }
-
-    static class CallBackHandler extends Handler {
-        @Override
-        public void handleMessage(Message msg) {
-            super.handleMessage(msg);
         }
     }
 
