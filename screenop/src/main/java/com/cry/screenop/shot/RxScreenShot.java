@@ -12,6 +12,8 @@ import android.support.v4.app.FragmentActivity;
 import android.util.Log;
 import android.view.Surface;
 
+import com.cry.screenop.SurfaceFactory;
+
 import java.nio.ByteBuffer;
 
 import io.reactivex.Observable;
@@ -153,6 +155,7 @@ public class RxScreenShot {
         @Override
         public void onStop() {
             super.onStop();
+            //这里还需要进行处理
         }
     }
 
@@ -161,10 +164,6 @@ public class RxScreenShot {
         public void handleMessage(Message msg) {
             super.handleMessage(msg);
         }
-    }
-
-    public interface SurfaceFactory {
-        Surface getInputSurface();
     }
 
     class ImageReaderSurface implements SurfaceFactory {
