@@ -1,15 +1,22 @@
 package com.cry.mediaprojectiondemo
 
 import android.os.Bundle
+import android.os.Environment
 import android.support.v7.app.AppCompatActivity
 import android.widget.Toast
 import com.cry.screenop.recorder.MediaCodecHelper
 import com.cry.screenop.recorder.MediaCodecLogHelper
 import com.cry.screenop.recorder.MediaCodecPermissionHelper
+import com.cry.screenop.recorder.encoder.VideoEncoder
 import kotlinx.android.synthetic.main.activity_recoder.*
 import kotlinx.android.synthetic.main.content_recoder.*
+import java.io.File
 
 class RecoderActivity : AppCompatActivity() {
+
+    private var isStart: Boolean = false
+    private var videoEncoder: VideoEncoder? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,13 +31,36 @@ class RecoderActivity : AppCompatActivity() {
         getAudioCodecName()
 
         fab.setOnClickListener {
-            MediaCodecPermissionHelper
-                    .requestMediaProjection(this@RecoderActivity)
-                    .subscribe(
-                            {
-                                println(it)
-                            },
-                            { e -> Toast.makeText(this@RecoderActivity, e.message, Toast.LENGTH_SHORT).show() })
+
+            if (isStart) {
+                videoEncoder!!.quit()
+                Toast.makeText(this@RecoderActivity, "End!", Toast.LENGTH_SHORT).show()
+            } else {
+                MediaCodecPermissionHelper
+                        .requestMediaProjection(this@RecoderActivity)
+                        .subscribe(
+                                {
+                                    println(it)
+                                    var file = File(Environment.getExternalStorageDirectory(), "mediaProjection/1.mp4")
+                                    file.parentFile.mkdirs()
+
+                                    val dest = file.absolutePath
+                                    videoEncoder = VideoEncoder(
+                                            480, 720, 1,
+                                            dest,
+                                            360, 480, 800000, 15, 1,
+                                            "OMX.google.h264.encoder",
+                                            "video/avc",
+                                            null
+                                            , it
+                                    )
+                                    videoEncoder!!.start()
+                                    Toast.makeText(this@RecoderActivity, "start!", Toast.LENGTH_SHORT).show()
+                                    isStart = true
+                                },
+                                { e -> Toast.makeText(this@RecoderActivity, e.message, Toast.LENGTH_SHORT).show() })
+            }
+
         }
 
     }
