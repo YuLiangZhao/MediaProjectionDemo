@@ -19,6 +19,8 @@ import android.view.Surface;
 
 import com.cry.screenop.recorder.stream.packer.Packer;
 import com.cry.screenop.recorder.stream.packer.flv.FlvPacker;
+import com.cry.screenop.recorder.stream.packer.rtmp.RtmpPacker;
+import com.cry.screenop.recorder.stream.sender.rtmp.RtmpSender;
 import com.cry.screenop.recorder.utils.IOUtils;
 
 import java.io.File;
@@ -129,8 +131,10 @@ public class VideoEncoder {
             startMuxerIfReady();
         }
     };
-    private FlvPacker flvPacker;
+    private FlvPacker mFlvPacker;
     private OutputStream mOutStream;
+    private RtmpSender mRtmpSender;
+    private RtmpPacker mRtmpPacker;
 
     public VideoEncoder(int mWidth, int mHeight, int mDpi, String mDstPath, int width, int height, int bitrate, int framerate, int iframeInterval, String codecName, String mimeType, MediaCodecInfo.CodecProfileLevel codecProfileLevel, MediaProjection mMediaProjection) {
         this.mWidth = mWidth;
@@ -162,9 +166,14 @@ public class VideoEncoder {
         //先从encoder中得到output
         ByteBuffer outputBuffer = mEncoder.getOutputBuffer(index);
         writeSampleData(mVideoTrackIndex, info, outputBuffer);
-        if (flvPacker != null) {
-            flvPacker.onVideoData(outputBuffer, info);
+        if (mFlvPacker != null) {
+            mFlvPacker.onVideoData(outputBuffer, info);
         }
+        if (mRtmpPacker != null) {
+            mRtmpPacker.onVideoData(outputBuffer, info);
+        }
+
+
         //重新将得到的buffer release ，还给codec.因为我们没有需要显示的surface，所以这里是false
         mEncoder.releaseOutputBuffer(index, false);
 
@@ -278,9 +287,16 @@ public class VideoEncoder {
         }
 
 
-        if (flvPacker != null) {
-            flvPacker.stop();
+        if (mFlvPacker != null) {
+            mFlvPacker.stop();
             IOUtils.close(mOutStream);
+        }
+
+        if (mRtmpSender != null) {
+            mRtmpSender.stop();
+        }
+        if (mRtmpPacker != null) {
+            mRtmpPacker.stop();
         }
 
         if (mMuxer != null) {
@@ -339,17 +355,24 @@ public class VideoEncoder {
 
         ByteBuffer sps = mVideoOutputFormat.getByteBuffer("csd-0");
         MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-        bufferInfo.size=sps.capacity();
-        bufferInfo.offset=0;
-        if (flvPacker != null) {
-            flvPacker.onVideoData(sps, bufferInfo);
+        bufferInfo.size = sps.capacity();
+        bufferInfo.offset = 0;
+        if (mFlvPacker != null) {
+            mFlvPacker.onVideoData(sps, bufferInfo);
         }
+        if (mRtmpPacker != null) {
+            mRtmpPacker.onVideoData(sps, bufferInfo);
+        }
+
         ByteBuffer pps = mVideoOutputFormat.getByteBuffer("csd-1");
         MediaCodec.BufferInfo bufferInfo2 = new MediaCodec.BufferInfo();
         bufferInfo2.size = pps.capacity();
         bufferInfo2.offset = 0;
-        if (flvPacker != null) {
-            flvPacker.onVideoData(pps, bufferInfo2);
+        if (mFlvPacker != null) {
+            mFlvPacker.onVideoData(pps, bufferInfo2);
+        }
+        if (mRtmpPacker != null) {
+            mRtmpPacker.onVideoData(pps, bufferInfo2);
         }
     }
 
@@ -386,20 +409,17 @@ public class VideoEncoder {
         }
 
 
-        flvPacker = new FlvPacker();
-//        packer.initAudioParams(AudioConfiguration.DEFAULT_FREQUENCY, 16, false);
-        flvPacker.initVideoParams(mWidth, mHeight, 24);
-        flvPacker.setPacketListener(new Packer.OnPacketListener() {
-            @Override
-            public void onPacket(byte[] data, int packetType) {
-                IOUtils.write(mOutStream, data, 0, data.length);
-                Log.d("flvPacker",data.length + " " + packetType);
-            }
-        });
-        flvPacker.start();
+        initFlvPacker();
+        mFlvPacker.start();
         File file = new File(Environment.getExternalStorageDirectory(), "mediaProjection/1.flv");
         mOutStream = IOUtils.open(file.getAbsolutePath(), true);
 
+        initRtmpPacker();
+        initSender();
+        connectServer();
+
+        mRtmpPacker.start();
+        mRtmpSender.start();
 
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(TAG + "-display",
                 mWidth, mHeight, mDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC, mEncoderInputSurface
@@ -407,6 +427,19 @@ public class VideoEncoder {
         Log.d(TAG, "created virtual display: " + mVirtualDisplay.getDisplay());
 
 
+    }
+
+    private void initFlvPacker() {
+        mFlvPacker = new FlvPacker();
+//        packer.initAudioParams(AudioConfiguration.DEFAULT_FREQUENCY, 16, false);
+        mFlvPacker.initVideoParams(mWidth, mHeight, 24);
+        mFlvPacker.setPacketListener(new Packer.OnPacketListener() {
+            @Override
+            public void onPacket(byte[] data, int packetType) {
+                IOUtils.write(mOutStream, data, 0, data.length);
+                Log.d("mFlvPacker", data.length + " " + packetType);
+            }
+        });
     }
 
     public void prepare() {
@@ -527,4 +560,96 @@ public class VideoEncoder {
         }
     }
 
+
+    private void initSender() {
+        mRtmpSender = new RtmpSender();
+        mRtmpSender.setVideoParams(mWidth, mHeight);
+//        mRtmpSender.setAudioParams(AudioConfiguration.DEFAULT_FREQUENCY, 16, false);
+        mRtmpSender.setSenderListener(mSenderListener);
+        mRtmpSender.setAddress("rtmp://192.168.31.17/live/STREAM_NAME");
+    }
+
+    private void initRtmpPacker() {
+        mRtmpPacker = new RtmpPacker();
+        mRtmpPacker.setPacketListener(new Packer.OnPacketListener() {
+            @Override
+            public void onPacket(byte[] data, int packetType) {
+                if (mRtmpSender != null) {
+                    mRtmpSender.onData(data, packetType);
+                }
+            }
+        });
+//        packer.initAudioParams(AudioConfiguration.DEFAULT_FREQUENCY, 16, false);
+//        mVideoConfiguration = new VideoConfiguration.Builder().setSize(mWidth, mHeight).build();
+//        setVideoConfiguration(mVideoConfiguration);
+//        setRecordPacker(packer);
+//        setRecordSender(mRtmpSender);
+    }
+
+    private void connectServer() {
+//        mProgressConnecting.setVisibility(View.VISIBLE);
+        Log.d("RtmpSender", "start to connect server");
+        mRtmpSender.connect();
+    }
+
+    private RtmpSender.OnSenderListener mSenderListener = new RtmpSender.OnSenderListener() {
+        @Override
+        public void onConnecting() {
+            Log.d("RtmpSender", "onConnecting");
+        }
+
+        @Override
+        public void onConnected() {
+//            mProgressConnecting.setVisibility(View.GONE);
+            Log.d("RtmpSender", "start to upload data");
+//            startRecording();
+//            mCurrentBps = mVideoConfiguration.maxBps;
+        }
+
+        @Override
+        public void onDisConnected() {
+//            mProgressConnecting.setVisibility(View.GONE);
+            Log.d("RtmpSender", "Disconnect");
+//            stopRecording();
+        }
+
+        @Override
+        public void onPublishFail() {
+//            mProgressConnecting.setVisibility(View.GONE);
+            Log.d("RtmpSender", "Fail to publish the stream");
+        }
+
+        @Override
+        public void onNetGood() {
+            Log.d("RtmpSender", "onNetGood ");
+
+//            if (mCurrentBps + 50 <= mVideoConfiguration.maxBps){
+//                SopCastLog.d(TAG, "BPS_CHANGE good up 50");
+//                int bps = mCurrentBps + 50;
+//                boolean result = setRecordBps(bps);
+//                if(result) {
+//                    mCurrentBps = bps;
+//                }
+//            } else {
+//                SopCastLog.d(TAG, "BPS_CHANGE good good good");
+//            }
+//            Log.d("RtmpSender","Current Bps: " + mCurrentBps);
+        }
+
+        @Override
+        public void onNetBad() {
+            Log.d("RtmpSender", "onNetBad ");
+//            if (mCurrentBps - 100 >= mVideoConfiguration.minBps){
+//                SopCastLog.d(TAG, "BPS_CHANGE bad down 100");
+//                int bps = mCurrentBps - 100;
+//                boolean result = setRecordBps(bps);
+//                if(result) {
+//                    mCurrentBps = bps;
+//                }
+//            } else {
+//                SopCastLog.d(TAG, "BPS_CHANGE bad down 100");
+//            }
+//            SopCastLog.d(TAG, "Current Bps: " + mCurrentBps);
+        }
+    };
 }
