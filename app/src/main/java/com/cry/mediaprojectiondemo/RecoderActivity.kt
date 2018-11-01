@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.support.v7.app.AppCompatActivity
 import android.widget.Toast
+import com.cry.mediaprojectiondemo.R.id.*
 import com.cry.screenop.recorder.MediaCodecHelper
 import com.cry.screenop.recorder.MediaCodecLogHelper
 import com.cry.screenop.recorder.MediaCodecPermissionHelper
@@ -48,7 +49,7 @@ class RecoderActivity : AppCompatActivity() {
                                     videoEncoder = VideoEncoder(
                                             480, 720, 1,
                                             dest,
-                                            360, 480, 800000, 15, 1,
+                                            480, 720, 800000, 15, 1,
                                             "OMX.google.h264.encoder",
                                             "video/avc",
                                             null

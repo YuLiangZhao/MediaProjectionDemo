@@ -8,6 +8,7 @@ import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.media.projection.MediaProjection;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -16,7 +17,13 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.Surface;
 
+import com.cry.screenop.recorder.stream.packer.Packer;
+import com.cry.screenop.recorder.stream.packer.flv.FlvPacker;
+import com.cry.screenop.recorder.utils.IOUtils;
+
+import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -122,6 +129,8 @@ public class VideoEncoder {
             startMuxerIfReady();
         }
     };
+    private FlvPacker flvPacker;
+    private OutputStream mOutStream;
 
     public VideoEncoder(int mWidth, int mHeight, int mDpi, String mDstPath, int width, int height, int bitrate, int framerate, int iframeInterval, String codecName, String mimeType, MediaCodecInfo.CodecProfileLevel codecProfileLevel, MediaProjection mMediaProjection) {
         this.mWidth = mWidth;
@@ -153,7 +162,9 @@ public class VideoEncoder {
         //先从encoder中得到output
         ByteBuffer outputBuffer = mEncoder.getOutputBuffer(index);
         writeSampleData(mVideoTrackIndex, info, outputBuffer);
-
+        if (flvPacker != null) {
+            flvPacker.onVideoData(outputBuffer, info);
+        }
         //重新将得到的buffer release ，还给codec.因为我们没有需要显示的surface，所以这里是false
         mEncoder.releaseOutputBuffer(index, false);
 
@@ -208,6 +219,7 @@ public class VideoEncoder {
                 encodedData.limit(info.offset + info.size);
                 //最后将数据写到muxer内
                 mMuxer.writeSampleData(track, encodedData, info);
+
 
                 Log.i(TAG, "Sent " + info.size + " bytes to MediaMuxer on track " + track);
             }
@@ -264,6 +276,13 @@ public class VideoEncoder {
             mMediaProjection.stop();
             mMediaProjection = null;
         }
+
+
+        if (flvPacker != null) {
+            flvPacker.stop();
+            IOUtils.close(mOutStream);
+        }
+
         if (mMuxer != null) {
             try {
                 mMuxer.stop();
@@ -317,6 +336,21 @@ public class VideoEncoder {
         Log.i(TAG, "Video output format changed.\n New format: " + newFormat.toString());
         //将格式保存下来
         mVideoOutputFormat = newFormat;
+
+        ByteBuffer sps = mVideoOutputFormat.getByteBuffer("csd-0");
+        MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+        bufferInfo.size=sps.capacity();
+        bufferInfo.offset=0;
+        if (flvPacker != null) {
+            flvPacker.onVideoData(sps, bufferInfo);
+        }
+        ByteBuffer pps = mVideoOutputFormat.getByteBuffer("csd-1");
+        MediaCodec.BufferInfo bufferInfo2 = new MediaCodec.BufferInfo();
+        bufferInfo2.size = pps.capacity();
+        bufferInfo2.offset = 0;
+        if (flvPacker != null) {
+            flvPacker.onVideoData(pps, bufferInfo2);
+        }
     }
 
     //发送signal来停止编码
@@ -351,10 +385,27 @@ public class VideoEncoder {
             throw new RuntimeException(e);
         }
 
+
+        flvPacker = new FlvPacker();
+//        packer.initAudioParams(AudioConfiguration.DEFAULT_FREQUENCY, 16, false);
+        flvPacker.initVideoParams(mWidth, mHeight, 24);
+        flvPacker.setPacketListener(new Packer.OnPacketListener() {
+            @Override
+            public void onPacket(byte[] data, int packetType) {
+                IOUtils.write(mOutStream, data, 0, data.length);
+                Log.d("flvPacker",data.length + " " + packetType);
+            }
+        });
+        flvPacker.start();
+        File file = new File(Environment.getExternalStorageDirectory(), "mediaProjection/1.flv");
+        mOutStream = IOUtils.open(file.getAbsolutePath(), true);
+
+
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(TAG + "-display",
                 mWidth, mHeight, mDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC, mEncoderInputSurface
                 , null, null);
         Log.d(TAG, "created virtual display: " + mVirtualDisplay.getDisplay());
+
 
     }
 
@@ -378,6 +429,8 @@ public class VideoEncoder {
         encoder.start();
 
         mEncoder = encoder;
+
+
     }
 
     /*
