@@ -17,6 +17,7 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.Surface;
 
+import com.cry.screenop.recorder.rtmp.RtmpHandle;
 import com.cry.screenop.recorder.stream.packer.Packer;
 import com.cry.screenop.recorder.stream.packer.flv.FlvPacker;
 import com.cry.screenop.recorder.utils.IOUtils;
@@ -26,6 +27,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -293,7 +296,17 @@ public class VideoEncoder {
             mMuxer = null;
         }
         mHandler = null;
+
+        rtmpService.execute(new Runnable() {
+            @Override
+            public void run() {
+                int ret = RtmpHandle.getInstance().close();
+                Log.w("RtmpHandle", "关闭RTMP连接：" + ret);
+            }
+        });
     }
+
+    ExecutorService rtmpService;
 
     private void startMuxerIfReady() {
         if (mMuxerStarted || mVideoOutputFormat == null) {
@@ -339,11 +352,12 @@ public class VideoEncoder {
 
         ByteBuffer sps = mVideoOutputFormat.getByteBuffer("csd-0");
         MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-        bufferInfo.size=sps.capacity();
-        bufferInfo.offset=0;
+        bufferInfo.size = sps.capacity();
+        bufferInfo.offset = 0;
         if (flvPacker != null) {
             flvPacker.onVideoData(sps, bufferInfo);
         }
+
         ByteBuffer pps = mVideoOutputFormat.getByteBuffer("csd-1");
         MediaCodec.BufferInfo bufferInfo2 = new MediaCodec.BufferInfo();
         bufferInfo2.size = pps.capacity();
@@ -372,6 +386,17 @@ public class VideoEncoder {
         if (mMediaProjection == null) {
             throw new IllegalStateException("maybe release");
         }
+
+        rtmpService = Executors.newFixedThreadPool(1);
+        rtmpService.execute(new Runnable() {
+            @Override
+            public void run() {
+                //打开连接
+                int ret = RtmpHandle.getInstance().connect("rtmp://192.168.31.17/live/TA");
+                Log.w("RtmpHandle", "打开RTMP连接: " + ret);
+            }
+        });
+
         mIsRunning.set(true);
 
         mMediaProjection.registerCallback(mProjectionCallback, mHandler);
@@ -393,7 +418,16 @@ public class VideoEncoder {
             @Override
             public void onPacket(byte[] data, int packetType) {
                 IOUtils.write(mOutStream, data, 0, data.length);
-                Log.d("flvPacker",data.length + " " + packetType);
+                Log.d("flvPacker", data.length + " " + packetType);
+
+                rtmpService.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        //打开连接
+                        int ret = RtmpHandle.getInstance().push(data, data.length);
+                        Log.w("RtmpHandle", "type：" + packetType + "  length:" + data.length + "  推流结果:" + ret);
+                    }
+                });
             }
         });
         flvPacker.start();

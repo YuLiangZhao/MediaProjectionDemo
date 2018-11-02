@@ -51,6 +51,7 @@ class RecoderActivity : AppCompatActivity() {
                                             dest,
                                             480, 720, 800000, 15, 1,
                                             "OMX.google.h264.encoder",
+//                                            "OMX.MTK.VIDEO.ENCODER.AVC",
                                             "video/avc",
                                             null
                                             , it
