@@ -17,6 +17,9 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.Surface;
 
+import com.cry.screenop.recorder.sender.VideoSender;
+import com.cry.screenop.recorder.sender.model.RESCoreParameters;
+import com.cry.screenop.recorder.sender.tools.LogTools;
 import com.cry.screenop.recorder.stream.packer.Packer;
 import com.cry.screenop.recorder.stream.packer.flv.FlvPacker;
 import com.cry.screenop.recorder.utils.IOUtils;
@@ -27,6 +30,12 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.security.auth.callback.CallbackHandler;
+
+import me.lake.librestreaming.rtmp.FLvMetaData;
+import me.lake.librestreaming.rtmp.RESFlvData;
+import me.lake.librestreaming.rtmp.RtmpClient;
 
 /**
  * VideoEncoder
@@ -131,6 +140,11 @@ public class VideoEncoder {
     };
     private FlvPacker flvPacker;
     private OutputStream mOutStream;
+    private long jniRtmpPointer;
+    private String serverIpAddr;
+    private FLvMetaData fLvMetaData;
+    private int errorTime;
+    private long startTime;
 
     public VideoEncoder(int mWidth, int mHeight, int mDpi, String mDstPath, int width, int height, int bitrate, int framerate, int iframeInterval, String codecName, String mimeType, MediaCodecInfo.CodecProfileLevel codecProfileLevel, MediaProjection mMediaProjection) {
         this.mWidth = mWidth;
@@ -165,6 +179,9 @@ public class VideoEncoder {
         if (flvPacker != null) {
             flvPacker.onVideoData(outputBuffer, info);
         }
+
+        rtmpSend(info, outputBuffer);
+
         //重新将得到的buffer release ，还给codec.因为我们没有需要显示的surface，所以这里是false
         mEncoder.releaseOutputBuffer(index, false);
 
@@ -293,6 +310,7 @@ public class VideoEncoder {
             mMuxer = null;
         }
         mHandler = null;
+        rtmpClose();
     }
 
     private void startMuxerIfReady() {
@@ -339,8 +357,8 @@ public class VideoEncoder {
 
         ByteBuffer sps = mVideoOutputFormat.getByteBuffer("csd-0");
         MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-        bufferInfo.size=sps.capacity();
-        bufferInfo.offset=0;
+        bufferInfo.size = sps.capacity();
+        bufferInfo.offset = 0;
         if (flvPacker != null) {
             flvPacker.onVideoData(sps, bufferInfo);
         }
@@ -351,6 +369,7 @@ public class VideoEncoder {
         if (flvPacker != null) {
             flvPacker.onVideoData(pps, bufferInfo2);
         }
+        rtmpSendFormat(newFormat);
     }
 
     //发送signal来停止编码
@@ -393,19 +412,19 @@ public class VideoEncoder {
             @Override
             public void onPacket(byte[] data, int packetType) {
                 IOUtils.write(mOutStream, data, 0, data.length);
-                Log.d("flvPacker",data.length + " " + packetType);
+                Log.d("flvPacker", data.length + " " + packetType);
             }
         });
         flvPacker.start();
         File file = new File(Environment.getExternalStorageDirectory(), "mediaProjection/1.flv");
         mOutStream = IOUtils.open(file.getAbsolutePath(), true);
 
+        rtmpOpen();
 
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(TAG + "-display",
                 mWidth, mHeight, mDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC, mEncoderInputSurface
                 , null, null);
         Log.d(TAG, "created virtual display: " + mVirtualDisplay.getDisplay());
-
 
     }
 
@@ -494,6 +513,85 @@ public class VideoEncoder {
         mHandler.sendEmptyMessage(MSG_START);
     }
 
+
+    private void rtmpOpen() {
+        LogTools.d("RESRtmpSender,WorkHandler,tid=" + Thread.currentThread().getId());
+        jniRtmpPointer = RtmpClient.open("rtmp://192.168.31.17/live/TA", true);
+        final int openR = jniRtmpPointer == 0 ? 1 : 0;
+        if (openR == 0) {
+            serverIpAddr = RtmpClient.getIpAddr(jniRtmpPointer);
+        }
+
+        if (jniRtmpPointer == 0) {
+
+        } else {
+            RESCoreParameters coreParameters = new RESCoreParameters();
+            coreParameters.mediacodecAVCFrameRate = 15;
+            coreParameters.videoWidth = mWidth;
+            coreParameters.videoHeight = mHeight;
+            fLvMetaData = new FLvMetaData(coreParameters);
+            byte[] MetaData = fLvMetaData.getMetaData();
+            RtmpClient.write(jniRtmpPointer,
+                    MetaData,
+                    MetaData.length,
+                    RESFlvData.FLV_RTMP_PACKET_TYPE_INFO, 0);
+//            state = STATE.RUNNING;
+        }
+    }
+
+    private void rtmpSendFormat(MediaFormat newFormat) {
+        RESFlvData resFlvData = VideoSender.sendAVCDecoderConfigurationRecord(0, newFormat);
+        rtmpPublish(resFlvData);
+    }
+
+    private void rtmpSend(MediaCodec.BufferInfo info, ByteBuffer outputBuffer) {
+        if (info.size == 0) {
+            return;
+        }
+        if (startTime == 0) {
+            startTime = info.presentationTimeUs / 1000;
+        }
+        //rtmp
+        outputBuffer.position(info.offset + 4);
+//        outputBuffer.position(info.offset);
+        outputBuffer.limit(info.offset + info.size);
+        RESFlvData resFlvData = VideoSender.sendRealData((info.presentationTimeUs / 1000) - startTime, outputBuffer);
+        rtmpPublish(resFlvData);
+    }
+
+    private void rtmpPublish(RESFlvData flvData) {
+//        RESFlvData flvData = (RESFlvData) msg.obj;
+//        if (writeMsgNum >= (maxQueueLength * 3 / 4) && flvData.flvTagType == RESFlvData.FLV_RTMP_PACKET_TYPE_VIDEO && flvData.droppable) {
+//            LogTools.d("senderQueue is crowded,abandon video");
+//            break;
+//        }
+        final int res = RtmpClient.write(jniRtmpPointer, flvData.byteBuffer, flvData.byteBuffer.length, flvData.flvTagType, flvData.dts);
+        LogTools.d("RtmpClient.write res=" + res + ", length =" + flvData.byteBuffer.length);
+        //        if (res == 0) {
+//            errorTime = 0;
+//            if (flvData.flvTagType == RESFlvData.FLV_RTMP_PACKET_TYPE_VIDEO) {
+//                videoByteSpeedometer.gain(flvData.size);
+//                sendFrameRateMeter.count();
+//            } else {
+//                audioByteSpeedometer.gain(flvData.size);
+//            }
+//        } else {
+//            ++errorTime;
+//            synchronized (syncConnectionListener) {
+//                if (connectionListener != null) {
+//                    CallbackDelivery.i().post(new RESConnectionListener.RESWriteErrorRunable(connectionListener, res));
+//                }
+//            }
+//        }
+    }
+
+    private void rtmpClose() {
+        errorTime = 0;
+        final int closeR = RtmpClient.close(jniRtmpPointer);
+        serverIpAddr = null;
+    }
+
+
     private class CallbackHandler extends Handler {
         CallbackHandler(Looper looper) {
             super(looper);
@@ -526,5 +624,6 @@ public class VideoEncoder {
             }
         }
     }
+
 
 }

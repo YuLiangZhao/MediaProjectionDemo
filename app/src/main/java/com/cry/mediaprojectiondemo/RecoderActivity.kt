@@ -56,6 +56,7 @@ class RecoderActivity : AppCompatActivity() {
                                             , it
                                     )
                                     videoEncoder!!.start()
+                                    moveTaskToBack(true)
                                     Toast.makeText(this@RecoderActivity, "start!", Toast.LENGTH_SHORT).show()
                                     isStart = true
                                 },
